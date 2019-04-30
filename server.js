@@ -2,6 +2,7 @@ var express = require('express');
 var passport = require('passport');
 var Strategy = require('passport-local').Strategy;
 var db = require('./db');
+var http = require("http");
 
 var Docker = require("dockerode")
 var docker = new Docker({socketPath: '/var/run/docker.sock'});
@@ -74,6 +75,18 @@ function getIP(container, callback) {
     });
 }
 
+function waitForConn(addr, port, callback) {
+    http.get({host: addr, port: port, path: "/"}, function(res) {
+        console.log('ready')
+        callback();
+    }).on('error', function(e) {
+      console.log('waiting')
+      setTimeout(function() {
+        waitForConn(addr, port, callback);
+      }, 500)
+    });
+}
+
 // Initialize Passport and restore authentication state, if any, from the
 // session.
 app.use(passport.initialize());
@@ -107,7 +120,10 @@ app.post('/login',
       getIP(container, function(ip) {
         console.log(ip)
         userToContainerIP[req.user.id] = ip
-        res.redirect('/profile');
+        var url = 'http://' + userToContainerIP[req.user.id] + ':3000';
+        waitForConn(ip, 3000, function() {
+          res.redirect(url);
+        });
       })
     });
   });

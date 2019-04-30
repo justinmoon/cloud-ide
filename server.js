@@ -3,6 +3,11 @@ var passport = require('passport');
 var Strategy = require('passport-local').Strategy;
 var db = require('./db');
 
+var Docker = require("dockerode")
+var docker = new Docker({socketPath: '/var/run/docker.sock'});
+
+var userToContainerIP = {} 
+
 
 // Configure the local strategy for use by Passport.
 //
@@ -56,6 +61,19 @@ app.use(require('cookie-parser')());
 app.use(require('body-parser').urlencoded({ extended: true }));
 app.use(require('express-session')({ secret: 'keyboard cat', resave: false, saveUninitialized: false }));
 
+
+function getIP(container, callback) {
+    container.inspect(function (err, data) {
+        var ip = data.NetworkSettings.Networks.bridge.IPAddress;
+        if (!ip) {
+            getIP(container, callback);
+        }
+        else {
+            callback(ip);
+        }
+    });
+}
+
 // Initialize Passport and restore authentication state, if any, from the
 // session.
 app.use(passport.initialize());
@@ -75,6 +93,28 @@ app.get('/login',
 app.post('/login', 
   passport.authenticate('local', { failureRedirect: '/login' }),
   function(req, res) {
+    docker.run('my-theia-full', [], undefined, { 
+      "Hostconfig": {
+        "Memory": 1073741824,
+        "DiskQuota": 1073741824
+        //"Binds": [__dirname+"/users/"+user.id+":/home/project"]
+      }
+    }, function(err, data, container) {
+      console.log("Error running docker image: ", err);
+    }).on('container', function(container) {
+      console.log(container);
+      console.log('container started successfully');
+      getIP(container, function(ip) {
+        console.log(ip)
+        userToContainerIP[req.user.id] = ip
+        res.redirect('/profile');
+      })
+    });
+  });
+
+app.post('/docker', 
+  passport.authenticate('local', { failureRedirect: '/login' }),
+  function(req, res) {
     res.redirect('/');
   });
   
@@ -87,7 +127,9 @@ app.get('/logout',
 app.get('/profile',
   require('connect-ensure-login').ensureLoggedIn(),
   function(req, res){
-    res.render('profile', { user: req.user });
+    console.log(req.user);
+    var url = 'http://' + userToContainerIP[req.user.id] + ':3000';
+    res.render('profile', { user: req.user, theia: url });
   });
 
-app.listen(3000);
+app.listen(4000);
